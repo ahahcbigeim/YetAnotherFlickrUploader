@@ -15,10 +15,12 @@ namespace YetAnotherFlickrUploader
 {
 	class Program
 	{
-		private const int BatchSizeForParallelUpload = 20;
+		private const int BatchSizeForParallelProcessing = 20;
 
 		static void Main(string[] args)
 		{
+			ConsoleHelper.WriteDebugLine("Authenticating...");
+
 			var token = Authenticate();
 
 			if (token == null)
@@ -41,8 +43,6 @@ namespace YetAnotherFlickrUploader
 				path = Environment.CurrentDirectory;
 			}
 
-			//path = @"C:\Users\Victor_Pryganov\Pictures\photos\06.20.09 Крымская слудка\";
-
 			Uploader.Flickr = FlickrManager.GetAuthInstance();
 
 			try
@@ -64,17 +64,17 @@ namespace YetAnotherFlickrUploader
 			{
 				ConsoleHelper.WriteInfoLine("Requesting access token...");
 
-				Flickr f = FlickrManager.GetInstance();
-				var requestToken = f.OAuthGetRequestToken("oob");
+				Flickr flickr = FlickrManager.GetInstance();
+				OAuthRequestToken requestToken = flickr.OAuthGetRequestToken("oob");
 
-				string url = f.OAuthCalculateAuthorizationUrl(requestToken.Token, AuthLevel.Write);
+				string url = flickr.OAuthCalculateAuthorizationUrl(requestToken.Token, AuthLevel.Write);
 
 				Process.Start(url);
 
 				ConsoleHelper.WriteInfo("Verifier: ");
-				var verifier = Console.ReadLine();
+				string verifier = Console.ReadLine();
 
-				token = f.OAuthGetAccessToken(requestToken, verifier);
+				token = flickr.OAuthGetAccessToken(requestToken, verifier);
 				FlickrManager.OAuthToken = token;
 			}
 
@@ -99,10 +99,11 @@ namespace YetAnotherFlickrUploader
 
 			ConsoleHelper.WriteDebugLine("Processing files in the directory: {0}.", path);
 
-			string photosetName = Path.GetFileName(Path.GetDirectoryName(files.First()));
+			string photosetName = GetPhotosetTitle(files.First());
 
 			var photoset = Uploader.FindPhotosetByName(photosetName);
 			bool photosetExists = photoset != null && photoset.Title == photosetName;
+			string photosetId = null;
 
 			List<Photo> photosetPhotos = photosetExists
 				? Uploader.GetPhotosetPictures(photoset.PhotosetId)
@@ -111,183 +112,154 @@ namespace YetAnotherFlickrUploader
 			if (photosetExists)
 			{
 				var totalFilesInDirectory = files.Count;
-				files.RemoveAll(x => photosetPhotos.Any(p => p.Title == Path.GetFileNameWithoutExtension(x)));
+				files.RemoveAll(x => photosetPhotos.Any(p => p.Title == GetPhotoTitle(x)));
 				ConsoleHelper.WriteInfoLine("{0} out of {1} files are already in the existing photoset.", totalFilesInDirectory - files.Count, totalFilesInDirectory);
 			}
 
 			// Check again as the collection might have been modified
 			if (!files.Any())
 			{
-				ConsoleHelper.WriteWarningLine("All files were already uploaded to the photoset. Nothing to do.");
-				return;
-			}
-
-			ConsoleHelper.WriteInfo("Agree to upload {0} files to {1} photoset '{2}'?\nYes/No: ",
-				files.Count,
-				photosetExists ? "the existing" : "a new",
-				photosetName);
-			var answer = Console.ReadKey();
-			if ("y" != answer.KeyChar.ToString(CultureInfo.InvariantCulture).ToLower())
-			{
-				return;
-			}
-
-			Console.WriteLine();
-
-			#region Upload photos
-
-			var failures = new ConcurrentDictionary<string, string>();
-			var photoIds = new ConcurrentDictionary<string, string>();
-
-			ConsoleHelper.WriteDebug("Progress: ");
-			SaveCursorPosition();
-
-			int uploaded = 0,
-				totalToUpload = files.Count;
-
-			ConsoleHelper.WriteDebug("{0} of {1}.", uploaded, totalToUpload);
-
-			object locker = new object();
-
-			while (files.Any())
-			{
-				// Take no more than {BatchSizeForParallelUpload} files for parallel processing
-				var batch = files.Take(BatchSizeForParallelUpload).ToList();
-
-				var uploadTasks = batch
-					.Select(fileName =>
-						Task.Factory.StartNew(() =>
-						{
-							var title = Path.GetFileNameWithoutExtension(fileName);
-							try
-							{
-								// Check if picture is not in the photoset (if it exists)
-								var photo = photosetPhotos.FirstOrDefault(x => x.Title == title); //?? Uploader.FindPictureByName(title);
-								if (photo == null || photo.Title != title)
-								{
-									// No such picture found - uploading
-									var photoId = Uploader.UploadPicture(fileName, title, null, null);
-									if (!photoIds.TryAdd(photoId, title))
-									{
-										//uploaded twice?
-										throw new Exception(String.Format("{0} is already in the list of uploaded files.", title));
-									}
-								}
-							}
-							catch (Exception e)
-							{
-								failures.TryAdd(fileName, e.Message);
-							}
-
-							files.Remove(fileName);
-
-							lock (locker)
-							{
-								RestoreCursorPosition();
-								ConsoleHelper.WriteDebug("{0} of {1}.", ++uploaded, totalToUpload);
-							}
-						}, TaskCreationOptions.LongRunning))
-					.ToArray();
-
-				// Wait for batch to be uploaded
-				Task.WaitAll(uploadTasks);
-
-				// Pause for 3 sec after each batch
-				Thread.Sleep(3000);
-			}
-
-			SetCursorPosition(0);
-
-			if (failures.Any())
-			{
-				ConsoleHelper.WriteErrorLine("Uploaded with errors:");
-				foreach (var failure in failures)
-				{
-					ConsoleHelper.WriteWarning("{0,-20}: ", failure.Key);
-					ConsoleHelper.WriteErrorLine(failure.Value);
-				}
+				ConsoleHelper.WriteWarningLine("All photos are already in the photoset. Nothing to upload.");
 			}
 			else
 			{
-				ConsoleHelper.WriteInfoLine("All files were successfully uploaded.");
+				if (ConsoleHelper.ConfirmYesNo(string.Format("Agree to upload {0} files to {1} photoset '{2}'?", files.Count, photosetExists ? "the existing" : "a new", photosetName)))
+				{
+					#region Upload photos
+
+					var photoIds = new List<string>();
+
+					var failures = ParallelExecute(files, (fileName) =>
+					{
+						var title = GetPhotoTitle(fileName);
+						// Check if picture is not in the photoset (if it exists)
+						var photo = photosetPhotos.FirstOrDefault(x => x.Title == title); //?? Uploader.FindPictureByName(title);
+						if (photo == null || photo.Title != title)
+						{
+							// No such picture found - uploading
+							var photoId = Uploader.UploadPicture(fileName, title, null, null);
+							if (photoIds.Contains(photoId))
+							{
+								//uploaded twice?
+								throw new Exception(string.Format("{0} is already in the list of uploaded files.", title));
+							}
+							photoIds.Add(photoId);
+						}
+					});
+
+					if (failures.Any())
+					{
+						ConsoleHelper.WriteErrorLine("Uploaded with errors:");
+						foreach (var failure in failures)
+						{
+							ConsoleHelper.WriteWarning("{0,-20}: ", failure.Key);
+							ConsoleHelper.WriteErrorLine(failure.Value);
+						}
+					}
+					else
+					{
+						ConsoleHelper.WriteInfoLine("All files were successfully uploaded.");
+					}
+
+					#endregion
+
+					if (!photoIds.Any())
+					{
+						ConsoleHelper.WriteWarningLine("No files were uploaded to '{0}'.", photosetName);
+					}
+					else
+					{
+						if (photosetExists)
+						{
+							photosetId = photoset.PhotosetId;
+						}
+						else
+						{
+							#region Create new photoset
+
+							ConsoleHelper.WriteInfoLine("Creating photoset '{0}'...", photosetName);
+
+							// Set the first photo in the set as its cover
+							var coverPhotoId = photoIds.First();
+							photoIds.Remove(coverPhotoId);
+
+							// Create new photoset
+							photoset = Uploader.CreatePhotoSet(photosetName, coverPhotoId);
+							photosetId = photoset.PhotosetId;
+
+							ConsoleHelper.WriteInfoLine("Photoset created.");
+
+							photosetExists = true;
+
+							#endregion
+						}
+
+						#region Move photos to the photoset
+
+						ConsoleHelper.WriteInfoLine("Moving uploaded files to the photoset...");
+
+						var fails = ParallelExecute(photoIds, (id) =>
+						{
+							Uploader.AddPictureToPhotoSet(id, photosetId);
+						});
+
+						if (!fails.Any())
+						{
+							ConsoleHelper.WriteInfoLine("Uploaded pictures were successfully moved to '{0}'.", photosetName);
+						}
+						else
+						{
+							ConsoleHelper.WriteErrorLine("Moved with errors:");
+							foreach (var fail in fails)
+							{
+								ConsoleHelper.WriteWarning("{0,-20}: ", fail.Key);
+								ConsoleHelper.WriteErrorLine(fail.Value);
+							}
+						}
+
+						#endregion
+					}
+				}
 			}
-
-			#endregion
-
-			if (!photoIds.Any())
-			{
-				ConsoleHelper.WriteWarningLine("No files were uploaded to '{0}'.", photosetName);
-				return;
-			}
-
-			string photosetId;
 
 			if (photosetExists)
 			{
-				photosetId = photoset.PhotosetId;
-			}
-			else
-			{
-				#region Create new photoset
+				// Get all photos in the photoset
+				photosetPhotos = Uploader.GetPhotosetPictures(photosetId);
 
-				ConsoleHelper.WriteInfoLine("Creating photoset '{0}'...", photosetName);
+				#region Validate photos in the photoset
 
-				// Set the first photo in the set as its cover
-				var coverPhotoId = photoIds.Keys.First();
-				string coverPhotoName;
-				photoIds.TryRemove(coverPhotoId, out coverPhotoName);
+				ValidateDirectory(path, photosetPhotos);
 
-				// Create new photoset
-				photoset = Uploader.CreatePhotoSet(photosetName, coverPhotoId);
-				photosetId = photoset.PhotosetId;
+				#endregion
 
-				ConsoleHelper.WriteInfoLine("Photoset created.");
+				#region Sort photos in the photoset
+
+				if (photosetPhotos.Count > 1 && ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?")))
+				{
+					SortPhotosInSet(photosetPhotos);
+				}
 
 				#endregion
 			}
+		}
 
-			#region Move photos to the photoset
-
-			ConsoleHelper.WriteInfoLine("Moving uploaded files to the photoset...");
-
-			ConsoleHelper.WriteDebug("Progress: ");
-			SaveCursorPosition();
-
-			int moved = 0,
-				totalToMove = photoIds.Count;
-
-			Console.Write("{0} of {1}.", moved, totalToMove);
-
-			// Move pictures to the photoset
-			var movingTasks = photoIds
-				.Select(x =>
-					Task.Factory.StartNew(() =>
-					{
-						Uploader.AddPictureToPhotoSet(x.Key, photosetId);
-						RestoreCursorPosition();
-						ConsoleHelper.WriteDebug("{0} of {1}.", ++moved, totalToMove);
-					}))
-				.ToArray();
-
-			Task.WaitAll(movingTasks);
-
-			#endregion
-
-			SetCursorPosition(0);
-			ConsoleHelper.WriteInfoLine("Uploaded pictures were successfully moved to '{0}'.", photosetName);
-
-			#region Validate photos in the photoset
-
-			// Rescan the directory
-			files = FindPictureFiles(path);
-
-			// Get all photos in the photoset
-			var photosetPhotoTitles = Uploader.GetPhotosetPictures(photosetId)
-				.Select(p => p.Title)
+		private static List<string> FindPictureFiles(string directory)
+		{
+			return Directory.EnumerateFiles(directory)
+				.Where(file => file.ToLower().EndsWith("jpg") || file.ToLower().EndsWith("jpeg"))
 				.ToList();
+		}
+
+		private static void ValidateDirectory(string directory, List<Photo> photosetPhotos)
+		{
+			// Rescan the directory
+			List<string> files = FindPictureFiles(directory);
+
+			List<string> photosetPhotoTitles = photosetPhotos.Select(p => p.Title).ToList();
 
 			// Find files which were not uploaded to the photoset
-			var leftFiles = files.Select(Path.GetFileNameWithoutExtension).Where(x => !photosetPhotoTitles.Contains(x)).ToList();
+			var leftFiles = files.Select(GetPhotoTitle).Where(x => !photosetPhotoTitles.Contains(x)).ToList();
 			if (leftFiles.Any())
 			{
 				ConsoleHelper.WriteWarningLine("\nSome files were not uploaded:");
@@ -311,15 +283,38 @@ namespace YetAnotherFlickrUploader
 					ConsoleHelper.WriteWarningLine("{0,-20} x{1}", duplicate.Title, duplicate.Count);
 				}
 			}
-
-			#endregion
 		}
 
-		public static List<string> FindPictureFiles(string directory)
+		private static void SortPhotosInSet(List<Photo> photosetPhotos)
 		{
-			return Directory.EnumerateFiles(directory)
-				.Where(file => file.ToLower().EndsWith("jpg") || file.ToLower().EndsWith("jpeg"))
-				.ToList();
+			List<Photo> orderedList = photosetPhotos.OrderBy(x => x.DateTaken).ToList();
+			DateTime maxDateUploaded = orderedList.Select(x => x.DateUploaded).Last();
+			int number = orderedList.Count;
+
+			ConsoleHelper.WriteInfoLine("Setting photo upload dates in the photoset...");
+
+			var fails = ParallelExecute(orderedList, (photo) =>
+			{
+				DateTime dateUploaded = maxDateUploaded.AddSeconds(-1 * number--);
+				Uploader.SetPhotoUploadDate(photo.PhotoId, dateUploaded);
+
+				RestoreCursorPosition();
+				ConsoleHelper.WriteDebug("{0} of {1}.", number, photosetPhotos.Count);
+			});
+
+			if (!fails.Any())
+			{
+				ConsoleHelper.WriteInfoLine("Successfully processed all photos in the photoset.");
+			}
+			else
+			{
+				ConsoleHelper.WriteErrorLine("Processed with errors:");
+				foreach (var fail in fails)
+				{
+					ConsoleHelper.WriteWarning("{0,-20}: ", fail.Key);
+					ConsoleHelper.WriteErrorLine(fail.Value);
+				}
+			}
 		}
 
 		#region Console helpers
@@ -347,5 +342,71 @@ namespace YetAnotherFlickrUploader
 		}
 
 		#endregion
+
+		private static string GetPhotosetTitle(string path)
+		{
+			return Path.GetFileName(Path.GetDirectoryName(path));
+		}
+
+		private static string GetPhotoTitle(string path)
+		{
+			string photosetName = GetPhotosetTitle(path);
+			string fileName = Path.GetFileNameWithoutExtension(path);
+			return string.Format("{0} - {1}", photosetName, fileName);
+		}
+
+		private static Dictionary<T, string> ParallelExecute<T>(List<T> source, Action<T> action)
+		{
+			var failures = new ConcurrentDictionary<T, string>();
+
+			ConsoleHelper.WriteDebug("Progress: ");
+			SaveCursorPosition();
+
+			int processed = 0,
+				total = source.Count;
+
+			ConsoleHelper.WriteDebug("{0} of {1}.", processed, total);
+
+			object locker = new object();
+
+			while (source.Any())
+			{
+				// Take no more than {BatchSize} files for parallel processing
+				var batch = source.Take(BatchSizeForParallelProcessing).ToList();
+
+				var tasks = batch
+					.Select(item =>
+						Task.Factory.StartNew(() =>
+						{
+							try
+							{
+								action.Invoke(item);
+							}
+							catch (Exception e)
+							{
+								failures.TryAdd(item, e.Message);
+							}
+
+							source.Remove(item);
+
+							lock (locker)
+							{
+								RestoreCursorPosition();
+								ConsoleHelper.WriteDebug("{0} of {1}.", ++processed, total);
+							}
+						}, TaskCreationOptions.LongRunning))
+					.ToArray();
+
+				// Wait for batch to be processed
+				Task.WaitAll(tasks);
+
+				// Pause for 3 sec after each batch
+				Thread.Sleep(3000);
+			}
+
+			SetCursorPosition(0);
+
+			return new Dictionary<T, string>(failures);
+		}
 	}
 }

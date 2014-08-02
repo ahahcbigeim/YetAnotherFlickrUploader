@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 
 namespace YetAnotherFlickrUploader.Helpers
 {
@@ -104,6 +105,17 @@ namespace YetAnotherFlickrUploader.Helpers
 			Console.ForegroundColor = fc;
 		}
 
+		public static bool ConfirmYesNo(string question)
+		{
+			WriteInfoLine(question);
+			WriteInfo("Yes/No: ");
+			var answer = Console.ReadKey();
+			Console.WriteLine();
+			return ("y" == answer.KeyChar.ToString(CultureInfo.InvariantCulture).ToLower());
+		}
+
+		#region Private methods
+
 		private static void Write(ConsoleColor color, string message)
 		{
 			var fc = Console.ForegroundColor;
@@ -135,5 +147,7 @@ namespace YetAnotherFlickrUploader.Helpers
 			Console.WriteLine(format, args);
 			Console.ForegroundColor = fc;
 		}
+ 
+		#endregion
 	}
 }

@@ -6,7 +6,7 @@ using FlickrNet;
 
 namespace YetAnotherFlickrUploader.Services
 {
-	public class Uploader
+	public static class Uploader
 	{
 		public static Flickr Flickr;
 		public static string UserId;
@@ -17,20 +17,26 @@ namespace YetAnotherFlickrUploader.Services
 			string photoId = TryExecute(
 				() => Flickr.UploadPicture(path, title, description, tags, false, false, false),
 				() => {
-					var photo = FindPictureByName(title);
-					return photo != null ? photo.PhotoId : null;
+					var photo = FindPictureNotInSet(title);
+					return photo != null && !string.IsNullOrEmpty(photo.PhotoId) ? photo.PhotoId : null;
 				});
 			Flickr.OnUploadProgress -= OnUploadProgress;
 
 			return photoId;
 		}
 
-		public static Photo FindPictureByName(string title)
+		public static Photo FindPictureNotInSet(string title)
 		{
 			var photos = Flickr.PhotosGetNotInSet(new PartialSearchOptions());
 			return photos.FirstOrDefault(x => x.Title == title);
 			//var photos = Flickr.PhotosSearch(new PhotoSearchOptions { UserId = UserId, Text = title });
 			//return photos.FirstOrDefault();
+		}
+
+		public static Photo FindPictureByName(string title)
+		{
+			var photos = Flickr.PhotosSearch(new PhotoSearchOptions { UserId = UserId, Text = title });
+			return photos.FirstOrDefault();
 		}
 
 		public static Photoset CreatePhotoSet(string title, string coverPhotoId)
@@ -52,14 +58,15 @@ namespace YetAnotherFlickrUploader.Services
 		public static List<Photo> GetPhotosetPictures(string photosetId)
 		{
 			var photos = new List<Photo>();
+			// Get photoset size from its properties
 			Photoset photoset = Flickr.PhotosetsGetInfo(photosetId);
-
+			// Get photos page by page
 			int pageNumber = 0;
 			int photosPerPage = 500; // Max. allowed value
 			while (pageNumber*photosPerPage < photoset.NumberOfPhotos)
 			{
 				var page = Flickr.PhotosetsGetPhotos(photosetId,
-					PhotoSearchExtras.AllUrls | PhotoSearchExtras.Description | PhotoSearchExtras.Tags,
+					PhotoSearchExtras.AllUrls | PhotoSearchExtras.Description | PhotoSearchExtras.Tags | PhotoSearchExtras.DateTaken | PhotoSearchExtras.DateUploaded,
 					++pageNumber,
 					photosPerPage);
 				photos.AddRange(page.ToList());
@@ -80,7 +87,7 @@ namespace YetAnotherFlickrUploader.Services
 			return photos.Where(x => x.PhotoId == photoId).Select(x => x.PhotoId).FirstOrDefault();
 		}
 
-		public void SetPhotoUploadDate(string photoId, DateTime datePosted)
+		public static void SetPhotoUploadDate(string photoId, DateTime datePosted)
 		{
 			Flickr.PhotosSetDates(photoId, datePosted);
 		}
