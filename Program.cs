@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -15,7 +16,8 @@ namespace YetAnotherFlickrUploader
 {
 	class Program
 	{
-		private const int BatchSizeForParallelProcessing = 20;
+		private static int BatchSizeForParallelUpload = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelUpload"]);
+		private static int BatchSizeForParallelProcessing = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelProcessing"]);
 
 		static void Main(string[] args)
 		{
@@ -103,6 +105,7 @@ namespace YetAnotherFlickrUploader
 
 			var photoset = Uploader.FindPhotosetByName(photosetName);
 			bool photosetExists = photoset != null && photoset.Title == photosetName;
+			bool photosetChanged = false;
 			string photosetId = null;
 
 			List<Photo> photosetPhotos = photosetExists
@@ -125,9 +128,13 @@ namespace YetAnotherFlickrUploader
 			{
 				if (ConsoleHelper.ConfirmYesNo(string.Format("Agree to upload {0} files to {1} photoset '{2}'?", files.Count, photosetExists ? "the existing" : "a new", photosetName)))
 				{
+					photosetChanged = true;
+
 					#region Upload photos
 
 					var photoIds = new List<string>();
+
+					ConsoleHelper.WriteInfoLine("\nUploading files...");
 
 					var failures = ParallelExecute(files, (fileName) =>
 					{
@@ -145,7 +152,7 @@ namespace YetAnotherFlickrUploader
 							}
 							photoIds.Add(photoId);
 						}
-					});
+					}, BatchSizeForParallelUpload);
 
 					if (failures.Any())
 					{
@@ -177,7 +184,7 @@ namespace YetAnotherFlickrUploader
 						{
 							#region Create new photoset
 
-							ConsoleHelper.WriteInfoLine("Creating photoset '{0}'...", photosetName);
+							ConsoleHelper.WriteInfoLine("\nCreating photoset '{0}'...", photosetName);
 
 							// Set the first photo in the set as its cover
 							var coverPhotoId = photoIds.First();
@@ -196,12 +203,12 @@ namespace YetAnotherFlickrUploader
 
 						#region Move photos to the photoset
 
-						ConsoleHelper.WriteInfoLine("Moving uploaded files to the photoset...");
+						ConsoleHelper.WriteInfoLine("\nMoving uploaded files to the photoset...");
 
 						var fails = ParallelExecute(photoIds, (id) =>
 						{
 							Uploader.AddPictureToPhotoSet(id, photosetId);
-						});
+						}, BatchSizeForParallelProcessing);
 
 						if (!fails.Any())
 						{
@@ -222,7 +229,7 @@ namespace YetAnotherFlickrUploader
 				}
 			}
 
-			if (photosetExists)
+			if (photosetChanged)
 			{
 				// Get all photos in the photoset
 				photosetPhotos = Uploader.GetPhotosetPictures(photosetId);
@@ -235,7 +242,7 @@ namespace YetAnotherFlickrUploader
 
 				#region Sort photos in the photoset
 
-				if (photosetPhotos.Count > 1 && ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?")))
+				if (photosetPhotos.Count > 1 /*&& ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?"))*/)
 				{
 					SortPhotosInSet(photosetPhotos);
 				}
@@ -291,7 +298,7 @@ namespace YetAnotherFlickrUploader
 			DateTime maxDateUploaded = orderedList.Select(x => x.DateUploaded).Last();
 			int number = orderedList.Count;
 
-			ConsoleHelper.WriteInfoLine("Setting photo upload dates in the photoset...");
+			ConsoleHelper.WriteInfoLine("\nSetting photo upload dates in the photoset...");
 
 			var fails = ParallelExecute(orderedList, (photo) =>
 			{
@@ -300,7 +307,7 @@ namespace YetAnotherFlickrUploader
 
 				RestoreCursorPosition();
 				ConsoleHelper.WriteDebug("{0} of {1}.", number, photosetPhotos.Count);
-			});
+			}, BatchSizeForParallelProcessing);
 
 			if (!fails.Any())
 			{
@@ -355,7 +362,7 @@ namespace YetAnotherFlickrUploader
 			return string.Format("{0} - {1}", photosetName, fileName);
 		}
 
-		private static Dictionary<T, string> ParallelExecute<T>(List<T> source, Action<T> action)
+		private static Dictionary<T, string> ParallelExecute<T>(List<T> source, Action<T> action, int batchSize)
 		{
 			var failures = new ConcurrentDictionary<T, string>();
 
@@ -369,10 +376,12 @@ namespace YetAnotherFlickrUploader
 
 			object locker = new object();
 
+			DateTime start = DateTime.Now;
+
 			while (source.Any())
 			{
-				// Take no more than {BatchSize} files for parallel processing
-				var batch = source.Take(BatchSizeForParallelProcessing).ToList();
+				// Take no more than {batchSize} files for parallel processing
+				var batch = source.Take(batchSize).ToList();
 
 				var tasks = batch
 					.Select(item =>
@@ -391,8 +400,17 @@ namespace YetAnotherFlickrUploader
 
 							lock (locker)
 							{
+								processed += 1;
+
+								DateTime now = DateTime.Now;
+
+								TimeSpan elapsed = now - start;
+								long timePerItem = elapsed.Ticks / processed;
+								TimeSpan eta = new TimeSpan((total - processed) * timePerItem);
+
 								RestoreCursorPosition();
-								ConsoleHelper.WriteDebug("{0} of {1}.", ++processed, total);
+								ConsoleHelper.WriteDebug("{0} of {1}. Est. time: {2}. Elapsed: {3}.", processed, total, TimeSpanToReadableString(eta), TimeSpanToReadableString(elapsed));
+								ConsoleHelper.WriteDebug("{0,20}", " ");
 							}
 						}, TaskCreationOptions.LongRunning))
 					.ToArray();
@@ -400,13 +418,32 @@ namespace YetAnotherFlickrUploader
 				// Wait for batch to be processed
 				Task.WaitAll(tasks);
 
-				// Pause for 3 sec after each batch
-				Thread.Sleep(3000);
+				// Pause for 1 sec after each batch
+				//Thread.Sleep(1000);
 			}
 
 			SetCursorPosition(0);
+			ConsoleHelper.WriteDebugLine("Done in {0}.{1,60}", TimeSpanToReadableString(DateTime.Now - start), " ");
 
 			return new Dictionary<T, string>(failures);
+		}
+
+		private static string TimeSpanToReadableString(TimeSpan span)
+		{
+			return span.ToString("c");
+			/*
+			string formatted = string.Format("{0}{1}{2}{3}",
+				span.TotalDays > 0 ? string.Format("{0:0} day{1}, ", span.Days, span.Days == 1 ? String.Empty : "s") : string.Empty,
+				span.TotalHours > 0 ? string.Format("{0:0} hour{1}, ", span.Hours, span.Hours == 1 ? String.Empty : "s") : string.Empty,
+				span.TotalMinutes > 0 ? string.Format("{0:0} minute{1}, ", span.Minutes, span.Minutes == 1 ? String.Empty : "s") : string.Empty,
+				span.TotalSeconds > 0 ? string.Format("{0:0} second{1}", span.Seconds, span.Seconds == 1 ? String.Empty : "s") : string.Empty);
+
+			if (formatted.EndsWith(", ")) formatted = formatted.Substring(0, formatted.Length - 2);
+
+			if (string.IsNullOrEmpty(formatted)) formatted = "0 seconds";
+
+			return formatted;
+			*/
 		}
 	}
 }
