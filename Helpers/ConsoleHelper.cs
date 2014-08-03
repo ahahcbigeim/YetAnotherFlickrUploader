@@ -100,8 +100,19 @@ namespace YetAnotherFlickrUploader.Helpers
 			Console.WriteLine("Exception details:");
 			Console.WriteLine(e.Message);
 			Console.WriteLine(e.Source);
-			Console.WriteLine("Stack:");
-			Console.WriteLine(e.StackTrace);
+			if (e.InnerException != null)
+			{
+				Console.WriteLine("Inner exception:");
+				Console.WriteLine(e.InnerException.Message);
+				Console.WriteLine(e.InnerException.Source);
+				Console.WriteLine("Stack:");
+				Console.WriteLine(e.InnerException.StackTrace);
+			}
+			else
+			{
+				Console.WriteLine("Stack:");
+				Console.WriteLine(e.StackTrace);
+			}
 			Console.ForegroundColor = fc;
 		}
 
