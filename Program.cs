@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using YetAnotherFlickrUploader.Helpers;
 using YetAnotherFlickrUploader.Services;
 using FlickrNet;
+using log4net;
 
 namespace YetAnotherFlickrUploader
 {
@@ -19,17 +20,17 @@ namespace YetAnotherFlickrUploader
 
 		static void Main(string[] args)
 		{
-			ConsoleHelper.WriteDebugLine("Authenticating...");
+			Logger.Debug("Authenticating...");
 
 			var token = Authenticate();
 
 			if (token == null)
 			{
-				ConsoleHelper.WriteErrorLine("Could not authenticate.");
+				Logger.Error("Could not authenticate.");
 				return;
 			}
 
-			ConsoleHelper.WriteInfoLine("Authenticated as " + token.FullName + ".");
+			Logger.Info("Authenticated as " + token.FullName + ".");
 
 			Uploader.UserId = token.UserId;
 
@@ -51,8 +52,8 @@ namespace YetAnotherFlickrUploader
 			}
 			catch (Exception e)
 			{
-				ConsoleHelper.WriteErrorLine("\nUpload failed.");
-				ConsoleHelper.WriteException(e);
+				Console.WriteLine();
+				Logger.Error("Upload failed.", e);
 			}
 		}
 
@@ -85,7 +86,7 @@ namespace YetAnotherFlickrUploader
 		{
 			if (!Directory.Exists(path))
 			{
-				ConsoleHelper.WriteErrorLine("The specified path is invalid.");
+				Logger.Error("The specified path is invalid.");
 				return;
 			}
 
@@ -93,11 +94,11 @@ namespace YetAnotherFlickrUploader
 
 			if (!files.Any())
 			{
-				ConsoleHelper.WriteWarningLine("Could not locate any files to upload in the directory: {0}.", path);
+				Logger.Warning("Could not locate any files to upload in the directory: {0}.", path);
 				return;
 			}
 
-			ConsoleHelper.WriteDebugLine("Processing files in the directory: {0}.", path);
+			Logger.Debug("Processing files in the directory: {0}.", path);
 
 			string photosetName = GetPhotosetTitle(files.First());
 
@@ -114,13 +115,13 @@ namespace YetAnotherFlickrUploader
 			{
 				var totalFilesInDirectory = files.Count;
 				files.RemoveAll(x => photosetPhotos.Any(p => p.Title == GetPhotoTitle(x)));
-				ConsoleHelper.WriteInfoLine("{0} out of {1} files are already in the existing photoset.", totalFilesInDirectory - files.Count, totalFilesInDirectory);
+				Logger.Info("{0} out of {1} files are already in the existing photoset.", totalFilesInDirectory - files.Count, totalFilesInDirectory);
 			}
 
 			// Check again as the collection might have been modified
 			if (!files.Any())
 			{
-				ConsoleHelper.WriteWarningLine("All photos are already in the photoset. Nothing to upload.");
+				Logger.Warning("All photos are already in the photoset. Nothing to upload.");
 			}
 			else
 			{
@@ -132,7 +133,8 @@ namespace YetAnotherFlickrUploader
 
 					var photoIds = new List<string>();
 
-					ConsoleHelper.WriteInfoLine("\nUploading files...");
+					Console.WriteLine();
+					Logger.Info("Uploading files...");
 
 					var failures = ParallelExecute(files, fileName =>
 					{
@@ -154,23 +156,22 @@ namespace YetAnotherFlickrUploader
 
 					if (failures.Any())
 					{
-						ConsoleHelper.WriteErrorLine("Uploaded with errors:");
+						Logger.Error("Uploaded with errors:");
 						foreach (var failure in failures)
 						{
-							ConsoleHelper.WriteWarning("{0,-20}: ", failure.Key);
-							ConsoleHelper.WriteErrorLine(failure.Value);
+							Logger.Error("{0,-20}: {1}", failure.Key, failure.Value);
 						}
 					}
 					else
 					{
-						ConsoleHelper.WriteInfoLine("All files were successfully uploaded.");
+						Logger.Info("All files were successfully uploaded.");
 					}
 
 					#endregion
 
 					if (!photoIds.Any())
 					{
-						ConsoleHelper.WriteWarningLine("No files were uploaded to '{0}'.", photosetName);
+						Logger.Warning("No files were uploaded to '{0}'.", photosetName);
 					}
 					else
 					{
@@ -182,7 +183,8 @@ namespace YetAnotherFlickrUploader
 						{
 							#region Create new photoset
 
-							ConsoleHelper.WriteInfoLine("\nCreating photoset '{0}'...", photosetName);
+							Console.WriteLine();
+							Logger.Info("Creating photoset '{0}'...", photosetName);
 
 							// Set the first photo in the set as its cover
 							var coverPhotoId = photoIds.First();
@@ -192,7 +194,7 @@ namespace YetAnotherFlickrUploader
 							photoset = Uploader.CreatePhotoSet(photosetName, coverPhotoId);
 							photosetId = photoset.PhotosetId;
 
-							ConsoleHelper.WriteInfoLine("Photoset created.");
+							Logger.Info("Photoset created.");
 
 							photosetExists = true;
 
@@ -201,21 +203,21 @@ namespace YetAnotherFlickrUploader
 
 						#region Move photos to the photoset
 
-						ConsoleHelper.WriteInfoLine("\nMoving uploaded files to the photoset...");
+						Console.WriteLine();
+						Logger.Info("Moving uploaded files to the photoset...");
 
 						var fails = ParallelExecute(photoIds, id => Uploader.AddPictureToPhotoSet(id, photosetId), BatchSizeForParallelProcessing);
 
 						if (!fails.Any())
 						{
-							ConsoleHelper.WriteInfoLine("Uploaded pictures were successfully moved to '{0}'.", photosetName);
+							Logger.Info("Uploaded pictures were successfully moved to '{0}'.", photosetName);
 						}
 						else
 						{
-							ConsoleHelper.WriteErrorLine("Moved with errors:");
+							Logger.Error("Moved with errors:");
 							foreach (var fail in fails)
 							{
-								ConsoleHelper.WriteWarning("{0,-20}: ", fail.Key);
-								ConsoleHelper.WriteErrorLine(fail.Value);
+								Logger.Error("{0,-20}: {1}", fail.Key, fail.Value);
 							}
 						}
 
@@ -264,7 +266,8 @@ namespace YetAnotherFlickrUploader
 			var leftFiles = files.Select(GetPhotoTitle).Where(x => !photosetPhotoTitles.Contains(x)).ToList();
 			if (leftFiles.Any())
 			{
-				ConsoleHelper.WriteWarningLine("\nSome files were not uploaded:");
+				Console.WriteLine();
+				Logger.Warning("Some files were not uploaded:");
 				foreach (var leftFile in leftFiles)
 				{
 					ConsoleHelper.WriteWarningLine(leftFile);
@@ -279,10 +282,11 @@ namespace YetAnotherFlickrUploader
 				.ToList();
 			if (duplicates.Any())
 			{
-				ConsoleHelper.WriteWarningLine("\nSome files have duplicates:");
+				Console.WriteLine();
+				Logger.Warning("Some files have duplicates:");
 				foreach (var duplicate in duplicates)
 				{
-					ConsoleHelper.WriteWarningLine("{0,-20} x{1}", duplicate.Title, duplicate.Count);
+					Logger.Warning("{0,-20} x{1}", duplicate.Title, duplicate.Count);
 				}
 			}
 		}
@@ -293,7 +297,8 @@ namespace YetAnotherFlickrUploader
 			DateTime maxDateUploaded = orderedList.Select(x => x.DateUploaded).Last();
 			int number = orderedList.Count;
 
-			ConsoleHelper.WriteInfoLine("\nSetting photo upload dates in the photoset...");
+			Console.WriteLine();
+			Logger.Info("Setting photo upload dates in the photoset...");
 
 			var fails = ParallelExecute(orderedList, photo =>
 			{
@@ -306,15 +311,14 @@ namespace YetAnotherFlickrUploader
 
 			if (!fails.Any())
 			{
-				ConsoleHelper.WriteInfoLine("Successfully processed all photos in the photoset.");
+				Logger.Info("Successfully processed all photos in the photoset.");
 			}
 			else
 			{
-				ConsoleHelper.WriteErrorLine("Processed with errors:");
+				Logger.Error("Processed with errors:");
 				foreach (var fail in fails)
 				{
-					ConsoleHelper.WriteWarning("{0,-20}: ", fail.Key);
-					ConsoleHelper.WriteErrorLine(fail.Value);
+					Logger.Error("{0,-20}: {1}", fail.Key, fail.Value);
 				}
 			}
 		}
@@ -418,7 +422,7 @@ namespace YetAnotherFlickrUploader
 			}
 
 			SetCursorPosition(0);
-			ConsoleHelper.WriteDebugLine("Done in {0}.{1,60}", TimeSpanToReadableString(DateTime.Now - start), " ");
+			Logger.Debug("Done in {0}.{1,60}", TimeSpanToReadableString(DateTime.Now - start), " ");
 
 			return new Dictionary<T, string>(failures);
 		}
