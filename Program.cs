@@ -3,10 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using YetAnotherFlickrUploader.Helpers;
 using YetAnotherFlickrUploader.Services;
@@ -16,8 +14,8 @@ namespace YetAnotherFlickrUploader
 {
 	class Program
 	{
-		private static int BatchSizeForParallelUpload = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelUpload"]);
-		private static int BatchSizeForParallelProcessing = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelProcessing"]);
+		private static readonly int BatchSizeForParallelUpload = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelUpload"]);
+		private static readonly int BatchSizeForParallelProcessing = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelProcessing"]);
 
 		static void Main(string[] args)
 		{
@@ -136,7 +134,7 @@ namespace YetAnotherFlickrUploader
 
 					ConsoleHelper.WriteInfoLine("\nUploading files...");
 
-					var failures = ParallelExecute(files, (fileName) =>
+					var failures = ParallelExecute(files, fileName =>
 					{
 						var title = GetPhotoTitle(fileName);
 						// Check if picture is not in the photoset (if it exists)
@@ -205,10 +203,7 @@ namespace YetAnotherFlickrUploader
 
 						ConsoleHelper.WriteInfoLine("\nMoving uploaded files to the photoset...");
 
-						var fails = ParallelExecute(photoIds, (id) =>
-						{
-							Uploader.AddPictureToPhotoSet(id, photosetId);
-						}, BatchSizeForParallelProcessing);
+						var fails = ParallelExecute(photoIds, id => Uploader.AddPictureToPhotoSet(id, photosetId), BatchSizeForParallelProcessing);
 
 						if (!fails.Any())
 						{
@@ -258,7 +253,7 @@ namespace YetAnotherFlickrUploader
 				.ToList();
 		}
 
-		private static void ValidateDirectory(string directory, List<Photo> photosetPhotos)
+		private static void ValidateDirectory(string directory, IEnumerable<Photo> photosetPhotos)
 		{
 			// Rescan the directory
 			List<string> files = FindPictureFiles(directory);
@@ -300,7 +295,7 @@ namespace YetAnotherFlickrUploader
 
 			ConsoleHelper.WriteInfoLine("\nSetting photo upload dates in the photoset...");
 
-			var fails = ParallelExecute(orderedList, (photo) =>
+			var fails = ParallelExecute(orderedList, photo =>
 			{
 				DateTime dateUploaded = maxDateUploaded.AddSeconds(-1 * number--);
 				Uploader.SetPhotoUploadDate(photo.PhotoId, dateUploaded);
@@ -374,7 +369,7 @@ namespace YetAnotherFlickrUploader
 
 			ConsoleHelper.WriteDebug("{0} of {1}.", processed, total);
 
-			object locker = new object();
+			var locker = new object();
 
 			DateTime start = DateTime.Now;
 
@@ -406,7 +401,7 @@ namespace YetAnotherFlickrUploader
 
 								TimeSpan elapsed = now - start;
 								long timePerItem = elapsed.Ticks / processed;
-								TimeSpan eta = new TimeSpan((total - processed) * timePerItem);
+								var eta = new TimeSpan((total - processed) * timePerItem);
 
 								RestoreCursorPosition();
 								ConsoleHelper.WriteDebug("{0} of {1}. Est. time: {2}. Elapsed: {3}.", processed, total, TimeSpanToReadableString(eta), TimeSpanToReadableString(elapsed));
@@ -433,25 +428,25 @@ namespace YetAnotherFlickrUploader
 			//return new DateTime(span.Ticks).ToString("hh:mm:ss");
 
 			string formatted;
-			if (span.TotalDays > 0)
+			if (span.TotalDays > 1)
 			{
 				formatted = string.Format("{0}{1}",
 					string.Format("{0:0} day{1}, ", span.Days, span.Days == 1 ? String.Empty : "s"),
 					span.TotalHours > 0 ? string.Format("{0:0} hour{1}, ", span.Hours, span.Hours == 1 ? String.Empty : "s") : string.Empty);
 			}
-			else if (span.TotalHours > 0)
+			else if (span.TotalHours > 1)
 			{
 				formatted = string.Format("{0}{1}",
 					string.Format("{0:0} hour{1}, ", span.Hours, span.Hours == 1 ? String.Empty : "s"),
 					span.TotalMinutes > 0 ? string.Format("{0:0} minute{1}, ", span.Minutes, span.Minutes == 1 ? String.Empty : "s") : string.Empty);
 			}
-			else if (span.TotalMinutes > 0)
+			else if (span.TotalMinutes > 1)
 			{
 				formatted = string.Format("{0}{1}",
 					string.Format("{0:0} minute{1}, ", span.Minutes, span.Minutes == 1 ? String.Empty : "s"),
 					span.TotalSeconds > 0 ? string.Format("{0:0} second{1}", span.Seconds, span.Seconds == 1 ? String.Empty : "s") : string.Empty);
 			}
-			else if (span.TotalSeconds > 0)
+			else if (span.TotalSeconds > 1)
 			{
 				formatted = string.Format("{0:0} second{1}", span.Seconds, span.Seconds == 1 ? String.Empty : "s");
 			}
