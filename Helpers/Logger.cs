@@ -5,7 +5,7 @@ namespace YetAnotherFlickrUploader.Helpers
 {
 	public static class Logger
 	{
-		private static ILog log = LogManager.GetLogger("app");
+		private static readonly ILog log = LogManager.GetLogger("app");
 
 		public static void Debug(string message)
 		{

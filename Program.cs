@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using YetAnotherFlickrUploader.Helpers;
 using YetAnotherFlickrUploader.Services;
 using FlickrNet;
-using log4net;
 
 namespace YetAnotherFlickrUploader
 {

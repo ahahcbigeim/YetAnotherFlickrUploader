@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using FlickrNet;
+using log4net;
 
 namespace YetAnotherFlickrUploader.Services
 {
@@ -11,14 +12,28 @@ namespace YetAnotherFlickrUploader.Services
 		public static Flickr Flickr;
 		public static string UserId;
 
+		private static readonly ILog log = LogManager.GetLogger("app");
+
 		public static string UploadPicture(string path, string title, string description, string tags)
 		{
 			Flickr.OnUploadProgress += OnUploadProgress;
 			string photoId = TryExecute(
-				() => Flickr.UploadPicture(path, title, description, tags, false, false, false),
-				() => {
+				() =>
+				{
+					var id = Flickr.UploadPicture(path, title, description, tags, false, false, false);
+					log.DebugFormat("Photo {0} uploaded with ID={1}.", System.IO.Path.GetFileNameWithoutExtension(path), id);
+					return id;
+				},
+				() =>
+				{
 					var photo = FindPictureNotInSet(title);
-					return photo != null && !string.IsNullOrEmpty(photo.PhotoId) ? photo.PhotoId : null;
+					var id = photo != null && !string.IsNullOrEmpty(photo.PhotoId) ? photo.PhotoId : null;
+					if (!string.IsNullOrEmpty(id))
+					{
+						log.DebugFormat("Photo {0} found in the list of uploaded early, ID={1}.",
+							System.IO.Path.GetFileNameWithoutExtension(path), id);
+					}
+					return id;
 				});
 			Flickr.OnUploadProgress -= OnUploadProgress;
 
@@ -62,7 +77,7 @@ namespace YetAnotherFlickrUploader.Services
 			Photoset photoset = Flickr.PhotosetsGetInfo(photosetId);
 			// Get photos page by page
 			int pageNumber = 0;
-			int photosPerPage = 500; // Max. allowed value
+			const int photosPerPage = 500; // Max. allowed value
 			while (pageNumber*photosPerPage < photoset.NumberOfPhotos)
 			{
 				var page = Flickr.PhotosetsGetPhotos(photosetId,
@@ -115,8 +130,11 @@ namespace YetAnotherFlickrUploader.Services
 					result = operation.Invoke();
 					break;
 				}
-				catch (Exception)
+				catch (Exception e)
 				{
+					var msg = string.Format("TryExecute<{0}>() failed (iteration {1}).", typeof (T), retries);
+					log.Error(msg, e);
+
 					result = verify.Invoke();
 					if (result != null)
 						break;
