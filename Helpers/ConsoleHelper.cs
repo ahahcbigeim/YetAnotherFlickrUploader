@@ -120,7 +120,10 @@ namespace YetAnotherFlickrUploader.Helpers
 		{
 			WriteInfoLine(question);
 			WriteInfo("Yes/No: ");
+			var fc = Console.ForegroundColor;
+			Console.ForegroundColor = ConsoleColor.White;
 			var answer = Console.ReadKey();
+			Console.ForegroundColor = fc;
 			Console.WriteLine();
 			return ("y" == answer.KeyChar.ToString(CultureInfo.InvariantCulture).ToLower());
 		}

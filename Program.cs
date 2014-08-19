@@ -14,11 +14,46 @@ namespace YetAnotherFlickrUploader
 {
 	class Program
 	{
-		private static readonly int BatchSizeForParallelUpload = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelUpload"]);
-		private static readonly int BatchSizeForParallelProcessing = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelProcessing"]);
+		static readonly int BatchSizeForParallelUpload = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelUpload"]);
+		static readonly int BatchSizeForParallelProcessing = Convert.ToInt32(ConfigurationManager.AppSettings["BatchSizeForParallelProcessing"]);
+
+		static ModesEnum _mode;
 
 		static void Main(string[] args)
 		{
+			#region Parse args
+
+			string path = null;
+			string modeSwitch = null;
+
+			if (args != null)
+			{
+				int i = 0;
+				while (i < args.Length)
+				{
+					string arg = args[i++];
+					if (arg.StartsWith("--"))
+					{
+						modeSwitch = arg;
+					}
+					else
+					{
+						path = arg;
+					}
+				}
+			}
+
+			if (string.IsNullOrEmpty(path))
+			{
+				path = Environment.CurrentDirectory;
+			}
+
+			_mode = GetModeFromArgs(modeSwitch);
+
+			#endregion
+
+			#region Authenticate with Flickr API
+
 			Logger.Debug("Authenticating...");
 
 			var token = Authenticate();
@@ -32,18 +67,11 @@ namespace YetAnotherFlickrUploader
 			Logger.Info("Authenticated as " + token.FullName + ".");
 
 			Uploader.UserId = token.UserId;
-
-			string path;
-			if (args != null && args.Length > 0)
-			{
-				path = args[0];
-			}
-			else
-			{
-				path = Environment.CurrentDirectory;
-			}
-
 			Uploader.Flickr = FlickrManager.GetAuthInstance();
+
+			#endregion
+
+			//path = @"D:\temp\photos\2010-09-04 мы на кухне\";
 
 			try
 			{
@@ -94,12 +122,18 @@ namespace YetAnotherFlickrUploader
 			if (!files.Any())
 			{
 				Logger.Warning("Could not locate any files to upload in the directory: {0}.", path);
-				return;
+
+				if (_mode == ModesEnum.Upload)
+				{
+					return;
+				}
+			}
+			else
+			{
+				Logger.Debug("Processing files in the directory: {0}.", path);
 			}
 
-			Logger.Debug("Processing files in the directory: {0}.", path);
-
-			string photosetName = GetPhotosetTitle(files.First());
+			string photosetName = Path.GetFileName(path.TrimEnd('\\')); //GetPhotosetTitle(files.First());
 
 			var photoset = Uploader.FindPhotosetByName(photosetName);
 			bool photosetExists = photoset != null && photoset.Title == photosetName;
@@ -112,6 +146,8 @@ namespace YetAnotherFlickrUploader
 
 			if (photosetExists)
 			{
+				photosetId = photoset.PhotosetId;
+
 				var totalFilesInDirectory = files.Count;
 				files.RemoveAll(x => photosetPhotos.Any(p => p.Title == GetPhotoTitle(x)));
 				Logger.Info("{0} out of {1} files are already in the existing photoset.", totalFilesInDirectory - files.Count, totalFilesInDirectory);
@@ -172,40 +208,34 @@ namespace YetAnotherFlickrUploader
 					{
 						Logger.Warning("No files were uploaded to '{0}'.", photosetName);
 					}
-					else
+					else if (!photosetExists)
 					{
-						if (photosetExists)
-						{
-							photosetId = photoset.PhotosetId;
-						}
-						else
-						{
-							#region Create new photoset
+						#region Create new photoset
 
-							Console.WriteLine();
-							Logger.Info("Creating photoset '{0}'...", photosetName);
+						Console.WriteLine();
+						Logger.Info("Creating photoset '{0}'...", photosetName);
 
-							// Set the first photo in the set as its cover
-							var coverPhotoId = photoIds.First();
-							photoIds.Remove(coverPhotoId);
+						// Set the first photo in the set as its cover
+						var coverPhotoId = photoIds.First();
+						photoIds.Remove(coverPhotoId);
 
-							// Create new photoset
-							photoset = Uploader.CreatePhotoSet(photosetName, coverPhotoId);
-							photosetId = photoset.PhotosetId;
+						// Create new photoset
+						photoset = Uploader.CreatePhotoSet(photosetName, coverPhotoId);
+						photosetId = photoset.PhotosetId;
 
-							Logger.Info("Photoset created.");
+						Logger.Info("Photoset created.");
 
-							photosetExists = true;
+						photosetExists = true;
 
-							#endregion
-						}
+						#endregion
 
 						#region Move photos to the photoset
 
 						Console.WriteLine();
 						Logger.Info("Moving uploaded files to the photoset...");
 
-						var fails = ParallelExecute(photoIds, id => Uploader.AddPictureToPhotoSet(id, photosetId), BatchSizeForParallelProcessing);
+						var fails = ParallelExecute(photoIds, id => Uploader.AddPictureToPhotoSet(id, photosetId),
+							BatchSizeForParallelProcessing);
 
 						if (!fails.Any())
 						{
@@ -225,7 +255,9 @@ namespace YetAnotherFlickrUploader
 				}
 			}
 
-			if (photosetChanged)
+			bool updatePermissions = _mode == ModesEnum.ShareWithFamily || _mode == ModesEnum.ShareWithFriends;
+
+			if (photosetChanged || updatePermissions)
 			{
 				// Get all photos in the photoset
 				photosetPhotos = Uploader.GetPhotosetPictures(photosetId);
@@ -238,9 +270,29 @@ namespace YetAnotherFlickrUploader
 
 				#region Sort photos in the photoset
 
-				if (photosetPhotos.Count > 1 /*&& ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?"))*/)
+				if (photosetPhotos.Count > 1 && photosetChanged)
 				{
-					SortPhotosInSet(photosetPhotos);
+					/*if (ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?")))*/
+					{
+						SortPhotosInSet(photosetPhotos);
+					}
+				}
+
+				#endregion
+
+				#region Set permissions
+
+				if (photosetPhotos.Count > 1 && updatePermissions)
+				{
+					if (photosetExists && !photosetChanged)
+					{
+						//updatePermissions = ConsoleHelper.ConfirmYesNo(string.Format("Update permissions in the photoset '{0}'?", photosetName));
+					}
+
+					if (updatePermissions)
+					{
+						SetPermissions(photosetPhotos, _mode == ModesEnum.ShareWithFamily, _mode == ModesEnum.ShareWithFriends);
+					}
 				}
 
 				#endregion
@@ -307,6 +359,29 @@ namespace YetAnotherFlickrUploader
 				RestoreCursorPosition();
 				ConsoleHelper.WriteDebug("{0} of {1}.", number, photosetPhotos.Count);
 			}, BatchSizeForParallelProcessing);
+
+			if (!fails.Any())
+			{
+				Logger.Info("Successfully processed all photos in the photoset.");
+			}
+			else
+			{
+				Logger.Error("Processed with errors:");
+				foreach (var fail in fails)
+				{
+					Logger.Error("{0,-20}: {1}", fail.Key, fail.Value);
+				}
+			}
+		}
+
+		private static void SetPermissions(List<Photo> photosetPhotos, bool family, bool friends)
+		{
+			Console.WriteLine();
+			Logger.Info("Setting permissions in the photoset...");
+
+			var fails = ParallelExecute(photosetPhotos,
+				photo => Uploader.SetPermissions(photo.PhotoId, false, friends, family),
+				BatchSizeForParallelProcessing);
 
 			if (!fails.Any())
 			{
@@ -476,5 +551,41 @@ namespace YetAnotherFlickrUploader
 			return formatted;
 			*/
 		}
+
+		#region Modes
+
+		private enum ModesEnum
+		{
+			Upload,
+			ShareWithFamily,
+			ShareWithFriends
+		}
+
+		private const string ShareWithFamily = "--family";
+		private const string ShareWithFriends = "--friends";
+
+		static ModesEnum GetModeFromArgs(string modeSwitch)
+		{
+			ModesEnum result = ModesEnum.Upload;
+
+			if (!string.IsNullOrEmpty(modeSwitch))
+			{
+				switch (modeSwitch)
+				{
+					case ShareWithFamily:
+						result = ModesEnum.ShareWithFamily;
+						break;
+					case ShareWithFriends:
+						result = ModesEnum.ShareWithFriends;
+						break;
+					default:
+						throw new ArgumentOutOfRangeException("Invalid switch '" + modeSwitch + "'.");
+				}
+			}
+
+			return result;
+		}
+
+		#endregion
 	}
 }

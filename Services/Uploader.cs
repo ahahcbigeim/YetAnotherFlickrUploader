@@ -107,6 +107,15 @@ namespace YetAnotherFlickrUploader.Services
 			Flickr.PhotosSetDates(photoId, datePosted);
 		}
 
+		public static void SetPermissions(string photoId, bool isPublic, bool isFriend, bool isFamily)
+		{
+			Flickr.PhotosSetPerms(photoId, isPublic, isFriend, isFamily, PermissionComment.FriendsAndFamily, PermissionAddMeta.FriendsAndFamily);
+			if (isPublic || isFriend || isFamily)
+			{
+				Flickr.PhotosSetSafetyLevel(photoId, SafetyLevel.Safe);
+			}
+		}
+
 		static void OnUploadProgress(object sender, UploadProgressEventArgs e)
 		{
 			if (!e.UploadComplete && e.ProcessPercentage > 0)
