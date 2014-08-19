@@ -122,10 +122,12 @@ namespace YetAnotherFlickrUploader.Helpers
 			WriteInfo("Yes/No: ");
 			var fc = Console.ForegroundColor;
 			Console.ForegroundColor = ConsoleColor.White;
-			var answer = Console.ReadKey();
+			//var answer = Console.ReadKey();
+			var answer = Console.ReadLine();
 			Console.ForegroundColor = fc;
-			Console.WriteLine();
-			return ("y" == answer.KeyChar.ToString(CultureInfo.InvariantCulture).ToLower());
+			//Console.WriteLine();
+			//return ("y" == answer.KeyChar.ToString(CultureInfo.InvariantCulture).ToLower());
+			return ("y" == answer.ToLower());
 		}
 
 		#region Private methods

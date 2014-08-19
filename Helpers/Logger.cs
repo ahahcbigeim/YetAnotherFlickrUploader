@@ -16,7 +16,7 @@ namespace YetAnotherFlickrUploader.Helpers
 		public static void Debug(string format, params object[] args)
 		{
 			ConsoleHelper.WriteDebugLine(format, args);
-			log.DebugFormat(FormatMessage(format, args));
+			log.Debug(FormatMessage(format, args));
 		}
 
 		public static void Info(string message)
@@ -28,7 +28,7 @@ namespace YetAnotherFlickrUploader.Helpers
 		public static void Info(string format, params object[] args)
 		{
 			ConsoleHelper.WriteInfoLine(format, args);
-			log.InfoFormat(FormatMessage(format, args));
+			log.Info(FormatMessage(format, args));
 		}
 
 		public static void Warning(string message)
@@ -40,7 +40,7 @@ namespace YetAnotherFlickrUploader.Helpers
 		public static void Warning(string format, params object[] args)
 		{
 			ConsoleHelper.WriteWarningLine(format, args);
-			log.WarnFormat(FormatMessage(format, args));
+			log.Warn(FormatMessage(format, args));
 		}
 
 		public static void Error(string message)
@@ -52,7 +52,7 @@ namespace YetAnotherFlickrUploader.Helpers
 		public static void Error(string format, params object[] args)
 		{
 			ConsoleHelper.WriteErrorLine(format, args);
-			log.ErrorFormat(FormatMessage(format, args));
+			log.Error(FormatMessage(format, args));
 		}
 
 		public static void Error(string message, Exception e)
@@ -64,7 +64,7 @@ namespace YetAnotherFlickrUploader.Helpers
 
 		private static string FormatMessage(string format, params object[] args)
 		{
-			string result = args != null ? string.Format(format, args) : format;
+			string result = args != null && args.Length > 0 ? string.Format(format, args) : format;
 			return result.TrimEnd(' ');
 		}
 	}
