@@ -48,7 +48,7 @@ namespace YetAnotherFlickrUploader
 				path = Environment.CurrentDirectory;
 			}
 
-			_mode = GetModeFromArgs(modeSwitch);
+			_mode = Options.GetModeFromArgs(modeSwitch);
 
 			#endregion
 
@@ -70,8 +70,6 @@ namespace YetAnotherFlickrUploader
 			Uploader.Flickr = FlickrManager.GetAuthInstance();
 
 			#endregion
-
-			//path = @"D:\temp\photos\2010-09-04 мы на кухне\";
 
 			try
 			{
@@ -257,7 +255,7 @@ namespace YetAnotherFlickrUploader
 
 			bool updatePermissions = _mode == ModesEnum.ShareWithFamily || _mode == ModesEnum.ShareWithFriends;
 
-			if (photosetChanged || updatePermissions)
+			if (photosetExists && (photosetChanged || updatePermissions))
 			{
 				// Get all photos in the photoset
 				photosetPhotos = Uploader.GetPhotosetPictures(photosetId);
@@ -268,34 +266,26 @@ namespace YetAnotherFlickrUploader
 
 				#endregion
 
-				#region Sort photos in the photoset
-
-				if (photosetPhotos.Count > 1 && photosetChanged)
+				if (photosetPhotos.Count > 1)
 				{
-					/*if (ConsoleHelper.ConfirmYesNo(string.Format("Apply correct sorting to the photoset?")))*/
+					#region Sort photos in the photoset
+
+					if (photosetChanged)
 					{
 						SortPhotosInSet(photosetPhotos);
 					}
-				}
 
-				#endregion
+					#endregion
 
-				#region Set permissions
-
-				if (photosetPhotos.Count > 1 && updatePermissions)
-				{
-					if (photosetExists && !photosetChanged)
-					{
-						//updatePermissions = ConsoleHelper.ConfirmYesNo(string.Format("Update permissions in the photoset '{0}'?", photosetName));
-					}
+					#region Set permissions
 
 					if (updatePermissions)
 					{
 						SetPermissions(photosetPhotos, _mode == ModesEnum.ShareWithFamily, _mode == ModesEnum.ShareWithFriends);
 					}
-				}
 
-				#endregion
+					#endregion
+				}
 			}
 		}
 
@@ -396,32 +386,6 @@ namespace YetAnotherFlickrUploader
 				}
 			}
 		}
-
-		#region Console helpers
-
-		private static int? _cursorPosY;
-		private static int? _cursorPosX;
-
-		public static void SaveCursorPosition()
-		{
-			_cursorPosY = Console.CursorTop;
-			_cursorPosX = Console.CursorLeft;
-		}
-
-		public static void RestoreCursorPosition()
-		{
-			SetCursorPosition(_cursorPosX, _cursorPosY);
-		}
-
-		public static void SetCursorPosition(int? left, int? top = null)
-		{
-			if (top.HasValue)
-				Console.CursorTop = top.Value;
-			if (left.HasValue)
-				Console.CursorLeft = left.Value;
-		}
-
-		#endregion
 
 		private static string GetPhotosetTitle(string path)
 		{
@@ -552,38 +516,28 @@ namespace YetAnotherFlickrUploader
 			*/
 		}
 
-		#region Modes
+		#region Console helpers
 
-		private enum ModesEnum
+		private static int? _cursorPosY;
+		private static int? _cursorPosX;
+
+		public static void SaveCursorPosition()
 		{
-			Upload,
-			ShareWithFamily,
-			ShareWithFriends
+			_cursorPosY = Console.CursorTop;
+			_cursorPosX = Console.CursorLeft;
 		}
 
-		private const string ShareWithFamily = "--family";
-		private const string ShareWithFriends = "--friends";
-
-		static ModesEnum GetModeFromArgs(string modeSwitch)
+		public static void RestoreCursorPosition()
 		{
-			ModesEnum result = ModesEnum.Upload;
+			SetCursorPosition(_cursorPosX, _cursorPosY);
+		}
 
-			if (!string.IsNullOrEmpty(modeSwitch))
-			{
-				switch (modeSwitch)
-				{
-					case ShareWithFamily:
-						result = ModesEnum.ShareWithFamily;
-						break;
-					case ShareWithFriends:
-						result = ModesEnum.ShareWithFriends;
-						break;
-					default:
-						throw new ArgumentOutOfRangeException("Invalid switch '" + modeSwitch + "'.");
-				}
-			}
-
-			return result;
+		public static void SetCursorPosition(int? left, int? top = null)
+		{
+			if (top.HasValue)
+				Console.CursorTop = top.Value;
+			if (left.HasValue)
+				Console.CursorLeft = left.Value;
 		}
 
 		#endregion

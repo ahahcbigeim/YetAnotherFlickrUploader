@@ -24,12 +24,12 @@ namespace YetAnotherFlickrUploader.Services
 		{
 			get
 			{
-				return YetAnotherFlickrUploader.Properties.Settings.Default.OAuthToken;
+				return Properties.Settings.Default.OAuthToken;
 			}
 			set
 			{
-				YetAnotherFlickrUploader.Properties.Settings.Default.OAuthToken = value;
-				YetAnotherFlickrUploader.Properties.Settings.Default.Save();
+				Properties.Settings.Default.OAuthToken = value;
+				Properties.Settings.Default.Save();
 			}
 		}
 	}
